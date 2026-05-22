@@ -79,15 +79,18 @@ const logState = {
   error: { lastAt: 0, suppressed: 0 },
 };
 
-// ─── multi‑port support (path‑based) ─────────────────────────
-function getBackendPortForPath(publicPath) {
-  // match /api followed by a number
-  const match = publicPath.match(/^\/api(\d+)$/);
-  if (match) {
-    return parseInt(match[1], 10);
-  }
-  // fallback to default port from env
-  return DEFAULT_BACKEND_PORT;
+// ─── multi‑port path parsing ─────────────────────────────────
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+const MULTI_PORT_RE = new RegExp(`^${escapeRegex(PUBLIC_RELAY_PATH)}(\\d+)(/.*)?$`);
+
+function parseMultiPortPath(pathname) {
+  const match = pathname.match(MULTI_PORT_RE);
+  if (!match) return null;
+  const port = parseInt(match[1], 10);
+  const upstreamSuffix = match[2] || "";
+  return { port, upstreamSuffix };
 }
 // ──────────────────────────────────────────────────────────────
 
@@ -153,9 +156,9 @@ export default async function handler(req, res) {
     }
     slotAcquired = true;
 
-    // determine backend port from the public path
-    const backendPort = getBackendPortForPath(normalizedPath);
-    // remove any existing port from TARGET_BASE (e.g., "http://1.2.3.4:443" → "http://1.2.3.4")
+    // Determine backend port from the public path (multi‑port aware)
+    const multiInfo = parseMultiPortPath(normalizedPath);
+    const backendPort = multiInfo ? multiInfo.port : DEFAULT_BACKEND_PORT;
     const targetBaseHost = TARGET_BASE.replace(/:\d+$/, "");
     const targetUrl = `${targetBaseHost}:${backendPort}${upstreamPath}${url.search || ""}`;
 
@@ -347,11 +350,19 @@ function isUpstreamTimeoutError(err) {
 }
 
 function isAllowedRelayPath(pathname, publicPath) {
-  return pathname === publicPath || pathname.startsWith(`${publicPath}/`);
+  if (pathname === publicPath) return true;
+  if (pathname.startsWith(`${publicPath}/`)) return true;
+  // multi‑port pattern: /api<number> and /api<number>/...
+  return parseMultiPortPath(pathname) !== null;
 }
 
 function mapPublicPathToRelayPath(pathname, publicPath, relayPath) {
   if (pathname === publicPath) return relayPath;
+  const multi = parseMultiPortPath(pathname);
+  if (multi) {
+    return `${relayPath}${multi.upstreamSuffix}`;
+  }
+  // Standard case (should not happen often, but kept for safety)
   const suffix = pathname.slice(publicPath.length);
   return `${relayPath}${suffix}`;
 }
