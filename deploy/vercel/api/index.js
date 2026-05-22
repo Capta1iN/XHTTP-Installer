@@ -1,5 +1,5 @@
 // =============================================================
-//  XHTTP Installer — Vercel Relay
+//  XHTTP Installer — Vercel Relay (multi‑port path edition)
 //  Copyright (C) 2025 avaco_cloud
 //  Repository: https://github.com/avacocloud/XHTTP-Installer
 //  Licensed under the GNU General Public License v3.0 (GPL-3.0).
@@ -20,6 +20,7 @@ export const config = {
 };
 
 const TARGET_BASE = (process.env.TARGET_DOMAIN || "").replace(/\/$/, "");
+const DEFAULT_BACKEND_PORT = parseInt(process.env.DEFAULT_BACKEND_PORT || "443", 10);
 const UPSTREAM_DNS_ORDER = (process.env.UPSTREAM_DNS_ORDER || "ipv4first").trim().toLowerCase();
 const PLATFORM_HEADER_PREFIX = `x-${String.fromCharCode(118, 101, 114, 99, 101, 108)}-`;
 const RELAY_PATH = normalizeRelayPath(process.env.RELAY_PATH || "");
@@ -77,6 +78,18 @@ const logState = {
   timeout: { lastAt: 0, suppressed: 0 },
   error: { lastAt: 0, suppressed: 0 },
 };
+
+// ─── multi‑port support (path‑based) ─────────────────────────
+function getBackendPortForPath(publicPath) {
+  // match /api followed by a number
+  const match = publicPath.match(/^\/api(\d+)$/);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+  // fallback to default port from env
+  return DEFAULT_BACKEND_PORT;
+}
+// ──────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -140,7 +153,11 @@ export default async function handler(req, res) {
     }
     slotAcquired = true;
 
-    const targetUrl = `${TARGET_BASE}${upstreamPath}${url.search || ""}`;
+    // determine backend port from the public path
+    const backendPort = getBackendPortForPath(normalizedPath);
+    // remove any existing port from TARGET_BASE (e.g., "http://1.2.3.4:443" → "http://1.2.3.4")
+    const targetBaseHost = TARGET_BASE.replace(/:\d+$/, "");
+    const targetUrl = `${targetBaseHost}:${backendPort}${upstreamPath}${url.search || ""}`;
 
     const headers = {};
     const clientIp = toHeaderValue(req.headers["x-real-ip"] || req.headers["x-forwarded-for"]);
@@ -464,4 +481,3 @@ function createThrottleTransform(limiter) {
     },
   });
 }
-
